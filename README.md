@@ -31,6 +31,55 @@ ollama serve
 
 The stop hook will use Ollama as fallback after OpenAI/Anthropic for generating completion messages.
 
+## Getting Started
+
+### Validate Your Setup
+
+After cloning the repository, validate your environment with our comprehensive setup script:
+
+```bash
+# Comprehensive validation (tests everything including hook execution)
+./scripts/setup.sh
+
+# Quick validation (fast checks, skips hook execution tests)
+./scripts/quick-check.sh
+```
+
+The setup script will:
+- ✅ Verify all required tools are installed (UV, Python 3.8+, Git)
+- ✅ Check for optional API keys with setup instructions
+- ✅ Test all 8 hooks can execute with UV
+- ✅ Validate `.claude/settings.json` configuration
+- ✅ Create necessary directories (`logs/`, `.claude/data/sessions/`)
+- ✅ Provide actionable solutions for any issues
+
+See [scripts/README.md](scripts/README.md) for detailed documentation.
+
+### Run Tests
+
+Validate the hook implementations with our comprehensive test suite:
+
+```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage report
+pytest tests/ --cov=.claude/hooks --cov-report=term-missing
+
+# Run only security-critical tests
+pytest tests/ -m security
+```
+
+**Test Coverage:**
+- 89 tests across 2 security-critical hooks
+- 84% average code coverage
+- Focus on dangerous command detection and prompt validation
+
+See [tests/README.md](tests/README.md) and [TEST_INFRASTRUCTURE_SUMMARY.md](TEST_INFRASTRUCTURE_SUMMARY.md) for complete testing documentation.
+
 ## Hook Lifecycle & Payloads
 
 This demo captures all 8 Claude Code hook lifecycle events with their JSON payloads:
@@ -41,9 +90,9 @@ This demo captures all 8 Claude Code hook lifecycle events with their JSON paylo
 **Enhanced:** Prompt validation, logging, context injection, security filtering
 
 ### 2. PreToolUse Hook
-**Fires:** Before any tool execution  
-**Payload:** `tool_name`, `tool_input` parameters  
-**Enhanced:** Blocks dangerous commands (`rm -rf`, `.env` access)
+**Fires:** Before any tool execution
+**Payload:** `tool_name`, `tool_input` parameters
+**Enhanced:** Blocks dangerous commands (`rm -rf`, `chmod 777`, `curl|sh`) and sensitive file access (`.env`, `.pem`, `.key`, SSH keys, credentials)
 
 ### 3. PostToolUse Hook  
 **Fires:** After successful tool completion  
@@ -161,12 +210,38 @@ Hooks provide deterministic control over Claude Code behavior without relying on
 
 ## Features Demonstrated
 
-- Prompt validation and security filtering
-- Context injection for enhanced AI responses
-- Command logging and auditing
-- Automatic transcript conversion  
-- Permission-based tool access control
-- Error handling in hook execution
+### Core Hook Capabilities
+- **Prompt validation and security filtering** - UserPromptSubmit hook
+- **Context injection for enhanced AI responses** - Dynamic prompt augmentation
+- **Command logging and auditing** - All hooks log to `logs/` directory
+- **Automatic transcript conversion** - PostToolUse hook creates readable chat.json
+- **Permission-based tool access control** - Settings.json configuration
+- **Comprehensive error handling** - Structured error logging to `logs/errors.json`
+
+### Security Enhancements
+- **Dangerous command blocking** - `rm -rf`, `dd`, `mkfs`, `fdisk`, fork bombs
+- **Overly permissive permissions** - Blocks `chmod 777` and equivalents
+- **Remote code execution prevention** - Blocks `curl|sh`, `wget|sh`, `eval`
+- **Sensitive file protection** - Blocks access to `.pem`, `.key`, SSH keys, credentials, `.env` files
+
+### Development Tools
+- **18 Custom Commands** - Project analysis, crypto research, code review, hook testing
+  - `/question`, `/prime`, `/git_status` - Project understanding
+  - `/crypto-research`, `/crypto-news` - Cryptocurrency analysis
+  - `/review-code`, `/sentient` - Code quality and review
+  - `/test-hooks`, `/explain-hooks` - Hook development and learning
+  - `/analyze-logs`, `/session-info`, `/agent-usage` - Analytics
+- **Session Management** - Track, analyze, and export Claude Code sessions
+  - `./scripts/session-manager.py list` - List all sessions
+  - `./scripts/session-manager.py stats` - Show statistics
+  - `./scripts/session-manager.py cleanup --days 30` - Clean old sessions
+- **Setup Validation** - Comprehensive environment checking
+- **Test Infrastructure** - 89 tests with 84% coverage on critical hooks
+
+### Sub-Agent Ecosystem
+- **23 Specialized Agents** - From cryptocurrency analysis to codebase improvement
+- **Meta-Agent** - Generates new agents from natural language descriptions
+- **Multi-LLM Support** - Intelligent fallbacks (Ollama → Anthropic → OpenAI)
 
 Run any Claude Code command to see hooks in action via the `logs/` files.
 
