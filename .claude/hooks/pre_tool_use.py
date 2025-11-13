@@ -8,6 +8,15 @@ import sys
 import re
 from pathlib import Path
 
+# Import error logger for structured error logging
+try:
+    from error_logger import log_error, log_warning, log_critical
+except ImportError:
+    # Fallback if error_logger not available
+    def log_error(*args, **kwargs): pass
+    def log_warning(*args, **kwargs): pass
+    def log_critical(*args, **kwargs): pass
+
 def is_dangerous_rm_command(command):
     """
     Comprehensive detection of dangerous rm commands.
@@ -51,6 +60,87 @@ def is_dangerous_rm_command(command):
     
     return False
 
+def contains_file_access_command(command):
+    """
+    Check if a bash command contains file-access operations.
+    Returns True only if the command actually reads/writes/executes files.
+
+    This prevents false positives from:
+    - git commit messages mentioning sensitive files
+    - echo/printf statements containing file-like text
+    - comments and documentation
+    """
+    # Check for redirection FIRST - if there's redirection, it's always file access
+    # This must be checked before safe commands (echo/printf with redirection IS file access)
+    command_lower = command.lower().strip()
+    if re.search(r'[<>]', command_lower):
+        # Has redirection - definitely file access
+        return True
+
+    # Safe commands that don't access files (even if they mention filenames)
+    # These are only safe if there's NO redirection (checked above)
+    safe_command_prefixes = [
+        r'^git\s+commit\b',      # git commit messages are just text
+        r'^git\s+log\b',         # git log output is just text
+        r'^git\s+show\b',        # git show output is just text
+        r'^git\s+diff\b',        # git diff output is just text
+        r'^git\s+status\b',      # git status output is just text
+        r'^git\s+branch\b',      # git branch names are just text
+        r'^git\s+tag\b',         # git tag names are just text
+        r'^echo\b',              # echo is just text output (without redirection)
+        r'^printf\b',            # printf is just text output (without redirection)
+        r'^#',                   # comments
+        r'^export\s+\w+\s*=',    # environment variable exports (not file access)
+    ]
+
+    # Check if command starts with a safe command prefix
+    for safe_pattern in safe_command_prefixes:
+        if re.search(safe_pattern, command_lower):
+            return False
+
+    # Commands that actually access files (read/write/execute)
+    file_access_commands = [
+        r'\bcat\b',          # read files
+        r'\bvim?\b',         # vi or vim - edit files
+        r'\bnano\b',         # edit files
+        r'\bemacs\b',        # edit files
+        r'\bless\b',         # read files
+        r'\bmore\b',         # read files
+        r'\bhead\b',         # read files
+        r'\btail\b',         # read files
+        r'\bcp\b',           # copy files
+        r'\bmv\b',           # move files
+        r'\brm\b',           # remove files
+        r'\bchmod\b',        # modify file permissions
+        r'\bchown\b',        # modify file ownership
+        r'\btouch\b',        # create/modify files
+        r'\bln\b',           # create links
+        r'\bscp\b',          # secure copy files
+        r'\brsync\b',        # sync files
+        r'\btar\b',          # archive files
+        r'\bzip\b',          # compress files
+        r'\bunzip\b',        # decompress files
+        r'\bgunzip\b',       # decompress files
+        r'\bbzip2\b',        # compress files
+        r'\bxz\b',           # compress files
+        r'\bsed\b',          # stream editor (can modify files with -i)
+        r'\bawk\b',          # can read files
+        r'\bgrep\b',         # can read files
+        r'\bfind\b',         # can execute commands on files
+        r'\bsource\b',       # execute file contents
+        r'\b\.\s+\S',        # dot command (source) - ". filename"
+        r'<\s*\S',           # input redirection - "< file"
+        r'>\s*\S',           # output redirection - "> file"
+        r'>>\s*\S',          # append redirection - ">> file"
+    ]
+
+    # Check if command contains file-access operations
+    for file_cmd_pattern in file_access_commands:
+        if re.search(file_cmd_pattern, command_lower):
+            return True
+
+    return False
+
 def is_sensitive_file_access(tool_name, tool_input):
     """
     Check if any tool is trying to access sensitive files containing secrets, credentials, or keys.
@@ -68,40 +158,45 @@ def is_sensitive_file_access(tool_name, tool_input):
     ALLOWED EXCEPTIONS:
     - .env.sample, .env.example (template files)
     - *.pub (public keys are safe)
+
+    CONTEXT-AWARE BLOCKING (prevents false positives):
+    - Read/Write/Edit tools: Always check file paths
+    - Bash tool: Only check if command contains file-access operations
+      (prevents blocking git commit messages, echo statements, etc.)
     """
     if tool_name in ['Read', 'Edit', 'MultiEdit', 'Write', 'Bash']:
         # Define sensitive file patterns with clear categories
         sensitive_patterns = {
             # Environment files
             'env_files': [
-                r'\b\.env\b(?!\.sample|\.example)',  # .env but not .env.sample or .env.example
+                r'\.env(?!\.sample|\.example)',  # .env but not .env.sample or .env.example
             ],
             # Private key files
             'private_keys': [
-                r'\.pem$',  # PEM private keys
-                r'\.key$',  # Generic key files
-                r'\.p12$',  # PKCS12 certificate files
-                r'\.pfx$',  # PFX certificate files
+                r'\.pem(?:\s|$)',  # PEM private keys
+                r'\.key(?:\s|$)',  # Generic key files
+                r'\.p12(?:\s|$)',  # PKCS12 certificate files
+                r'\.pfx(?:\s|$)',  # PFX certificate files
             ],
             # SSH keys (block private keys only, not .pub public keys)
             'ssh_keys': [
-                r'\bid_rsa\b(?!\.pub)',  # SSH RSA private key
-                r'\bid_ed25519\b(?!\.pub)',  # SSH Ed25519 private key
-                r'\bid_ecdsa\b(?!\.pub)',  # SSH ECDSA private key
-                r'\bid_dsa\b(?!\.pub)',  # SSH DSA private key
+                r'\bid_rsa(?!\.pub)',  # SSH RSA private key
+                r'\bid_ed25519(?!\.pub)',  # SSH Ed25519 private key
+                r'\bid_ecdsa(?!\.pub)',  # SSH ECDSA private key
+                r'\bid_dsa(?!\.pub)',  # SSH DSA private key
             ],
             # Credential and secret files
             'credentials': [
-                r'\bcredentials\.json\b',  # JSON credentials
-                r'\bcredentials\.ya?ml\b',  # YAML credentials
-                r'\bsecrets?\.json\b',  # JSON secrets
-                r'\bsecrets?\.ya?ml\b',  # YAML secrets
+                r'\bcredentials\.json',  # JSON credentials
+                r'\bcredentials\.ya?ml',  # YAML credentials
+                r'\bsecrets?\.json',  # JSON secrets
+                r'\bsecrets?\.ya?ml',  # YAML secrets
             ],
             # Cloud provider and SSH config files
             'config_files': [
-                r'\.aws/credentials\b',  # AWS credentials
-                r'\.aws/config\b',  # AWS config (may contain secrets)
-                r'\.ssh/config\b',  # SSH config (may contain sensitive info)
+                r'\.aws/credentials',  # AWS credentials
+                r'\.aws/config',  # AWS config (may contain secrets)
+                r'\.ssh/config',  # SSH config (may contain sensitive info)
             ],
         }
 
@@ -115,15 +210,18 @@ def is_sensitive_file_access(tool_name, tool_input):
                     if re.search(pattern, file_path):
                         return True, category, file_path
 
-        # Check bash commands for sensitive file access
+        # Check bash commands for sensitive file access (context-aware)
         elif tool_name == 'Bash':
             command = tool_input.get('command', '')
 
-            # Check against all sensitive patterns in bash commands
-            for category, patterns in sensitive_patterns.items():
-                for pattern in patterns:
-                    if re.search(pattern, command):
-                        return True, category, command
+            # Only check for sensitive files if the command actually accesses files
+            # This prevents false positives from git commit messages, echo statements, etc.
+            if contains_file_access_command(command):
+                # Check against all sensitive patterns in bash commands
+                for category, patterns in sensitive_patterns.items():
+                    for pattern in patterns:
+                        if re.search(pattern, command):
+                            return True, category, command
 
     return False, None, None
 
@@ -233,6 +331,19 @@ def main():
         # Blocks access to credentials, keys, secrets, and other sensitive files
         is_sensitive, category, target = is_sensitive_file_access(tool_name, tool_input)
         if is_sensitive:
+            # Log the blocked sensitive file access
+            log_critical(
+                hook_name='pre_tool_use',
+                error_type='SENSITIVE_FILE_BLOCKED',
+                message=f'Blocked access to sensitive {category}',
+                context={
+                    'session_id': input_data.get('session_id', 'unknown'),
+                    'tool_name': tool_name,
+                    'category': category,
+                    'target': target
+                }
+            )
+
             print(f"BLOCKED: Access to sensitive {category} is prohibited", file=sys.stderr)
             print(f"Target: {target}", file=sys.stderr)
             print("", file=sys.stderr)
@@ -250,6 +361,18 @@ def main():
 
             # Check for dangerous rm -rf commands
             if is_dangerous_rm_command(command):
+                # Log the blocked dangerous rm command
+                log_critical(
+                    hook_name='pre_tool_use',
+                    error_type='DANGEROUS_RM_BLOCKED',
+                    message='Blocked dangerous rm -rf command',
+                    context={
+                        'session_id': input_data.get('session_id', 'unknown'),
+                        'tool_name': tool_name,
+                        'command': command
+                    }
+                )
+
                 print("BLOCKED: Dangerous rm command detected and prevented", file=sys.stderr)
                 print(f"Command: {command}", file=sys.stderr)
                 print("", file=sys.stderr)
@@ -262,6 +385,19 @@ def main():
             # Check for other dangerous command patterns
             is_dangerous, reason = is_dangerous_command(command)
             if is_dangerous:
+                # Log the blocked dangerous command
+                log_critical(
+                    hook_name='pre_tool_use',
+                    error_type='DANGEROUS_COMMAND_BLOCKED',
+                    message=f'Blocked dangerous command: {reason}',
+                    context={
+                        'session_id': input_data.get('session_id', 'unknown'),
+                        'tool_name': tool_name,
+                        'command': command,
+                        'reason': reason
+                    }
+                )
+
                 print(f"BLOCKED: Dangerous command pattern detected - {reason}", file=sys.stderr)
                 print(f"Command: {command}", file=sys.stderr)
                 print("", file=sys.stderr)
@@ -297,7 +433,15 @@ def main():
         
         sys.exit(0)
         
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        # Log JSON parsing failure
+        log_error(
+            hook_name='pre_tool_use',
+            error_type='JSON_PARSE_ERROR',
+            message='Failed to parse JSON input',
+            context={'error': str(e)},
+            exception=e
+        )
         # Gracefully handle JSON decode errors
         sys.exit(0)
     except Exception:
