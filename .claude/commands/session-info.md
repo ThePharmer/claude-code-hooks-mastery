@@ -7,17 +7,19 @@ description: Display information about current and past Claude Code sessions
 
 Show detailed information about Claude Code sessions, including agent names, prompt history, and session metadata.
 
+**Uses the integrated session-manager.py tool for robust session analysis.**
+
 ## Instructions
 
-- **IMPORTANT: Parse session JSON files carefully**
+- **IMPORTANT: Use session-manager.py for data retrieval**
 - **IMPORTANT: Respect privacy - only show metadata, not full prompts**
 - **IMPORTANT: Show agent naming patterns and session progression**
 - **IMPORTANT: Highlight interesting session characteristics**
 
 ## Commands
 
-- List sessions: !`ls -1t .claude/data/sessions/*.json 2>/dev/null | head -10`
-- Session count: !`ls -1 .claude/data/sessions/*.json 2>/dev/null | wc -l`
+- Session statistics: !`./scripts/session-manager.py stats`
+- List recent sessions: !`./scripts/session-manager.py list`
 - Current session: !`echo $CLAUDE_SESSION_ID`
 
 ## Files

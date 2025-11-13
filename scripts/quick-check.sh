@@ -57,8 +57,25 @@ else
     FAILED=1
 fi
 
-# Check hooks
-HOOK_COUNT=$(ls -1 "$PROJECT_ROOT/.claude/hooks/"*.py 2>/dev/null | wc -l)
+# Check hooks (only count actual hook files, not utility modules)
+EXPECTED_HOOKS=(
+    "user_prompt_submit.py"
+    "pre_tool_use.py"
+    "post_tool_use.py"
+    "notification.py"
+    "stop.py"
+    "subagent_stop.py"
+    "pre_compact.py"
+    "session_start.py"
+)
+
+HOOK_COUNT=0
+for hook in "${EXPECTED_HOOKS[@]}"; do
+    if [ -f "$PROJECT_ROOT/.claude/hooks/$hook" ]; then
+        HOOK_COUNT=$((HOOK_COUNT + 1))
+    fi
+done
+
 if [ "$HOOK_COUNT" -eq 8 ]; then
     echo -e "${GREEN}✓${NC} All 8 hooks present"
 else
