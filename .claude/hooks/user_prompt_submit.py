@@ -19,6 +19,15 @@ try:
 except ImportError:
     pass  # dotenv is optional
 
+# Import error logger for structured error logging
+try:
+    from error_logger import log_error, log_warning, log_critical
+except ImportError:
+    # Fallback if error_logger not available
+    def log_error(*args, **kwargs): pass
+    def log_warning(*args, **kwargs): pass
+    def log_critical(*args, **kwargs): pass
+
 
 def log_user_prompt(session_id, input_data):
     """Log user prompt to logs directory."""
@@ -63,7 +72,18 @@ def manage_session_data(session_id, prompt, name_agent=False):
         try:
             with open(session_file, 'r') as f:
                 session_data = json.load(f)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as e:
+            # Log session file read failure
+            log_warning(
+                hook_name='user_prompt_submit',
+                error_type='SESSION_FILE_READ_ERROR',
+                message='Failed to read session file, creating new session data',
+                context={
+                    'session_id': session_id,
+                    'session_file': str(session_file),
+                    'error': str(e)
+                }
+            )
             session_data = {"session_id": session_id, "prompts": []}
     else:
         session_data = {"session_id": session_id, "prompts": []}
@@ -89,7 +109,17 @@ def manage_session_data(session_id, prompt, name_agent=False):
                     session_data["agent_name"] = agent_name
                 else:
                     raise Exception("Invalid name from Ollama")
-        except Exception:
+        except Exception as e:
+            # Log Ollama agent naming failure (will try Anthropic next)
+            log_warning(
+                hook_name='user_prompt_submit',
+                error_type='AGENT_NAMING_OLLAMA_FAILED',
+                message='Ollama agent naming failed, falling back to Anthropic',
+                context={
+                    'session_id': session_id,
+                    'error': str(e)
+                }
+            )
             # Fall back to Anthropic if Ollama fails
             try:
                 result = subprocess.run(
@@ -104,7 +134,17 @@ def manage_session_data(session_id, prompt, name_agent=False):
                     # Validate the name
                     if len(agent_name.split()) == 1 and agent_name.isalnum():
                         session_data["agent_name"] = agent_name
-            except Exception:
+            except Exception as e:
+                # Log complete agent naming failure
+                log_warning(
+                    hook_name='user_prompt_submit',
+                    error_type='AGENT_NAMING_FAILED',
+                    message='Both Ollama and Anthropic agent naming failed',
+                    context={
+                        'session_id': session_id,
+                        'error': str(e)
+                    }
+                )
                 # If both fail, don't block the prompt
                 pass
     
@@ -112,7 +152,19 @@ def manage_session_data(session_id, prompt, name_agent=False):
     try:
         with open(session_file, 'w') as f:
             json.dump(session_data, f, indent=2)
-    except Exception:
+    except Exception as e:
+        # Log session file write failure
+        log_error(
+            hook_name='user_prompt_submit',
+            error_type='SESSION_FILE_WRITE_ERROR',
+            message='Failed to write session file',
+            context={
+                'session_id': session_id,
+                'session_file': str(session_file),
+                'error': str(e)
+            },
+            exception=e
+        )
         # Silently fail if we can't write the file
         pass
 
@@ -169,6 +221,17 @@ def main():
         if args.validate and not args.log_only:
             is_valid, reason = validate_prompt(prompt)
             if not is_valid:
+                # Log prompt validation failure
+                log_warning(
+                    hook_name='user_prompt_submit',
+                    error_type='PROMPT_VALIDATION_FAILED',
+                    message=f'Prompt blocked: {reason}',
+                    context={
+                        'session_id': session_id,
+                        'prompt_preview': prompt[:100],  # First 100 chars
+                        'reason': reason
+                    }
+                )
                 # Exit code 2 blocks the prompt with error message
                 print(f"Prompt blocked: {reason}", file=sys.stderr)
                 sys.exit(2)
@@ -180,7 +243,15 @@ def main():
         # Success - prompt will be processed
         sys.exit(0)
         
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        # Log JSON parsing failure
+        log_error(
+            hook_name='user_prompt_submit',
+            error_type='JSON_PARSE_ERROR',
+            message='Failed to parse JSON input from stdin',
+            context={'error': str(e)},
+            exception=e
+        )
         # Handle JSON decode errors gracefully
         sys.exit(0)
     except Exception:
